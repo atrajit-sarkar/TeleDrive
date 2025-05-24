@@ -1,19 +1,21 @@
+
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import type { MediaItem, UploadFormData } from "@/lib/types";
-import { mockMediaItems } from "@/lib/mock-data";
+// import { mockMediaItems } from "@/lib/mock-data"; // Will be fetched via action
 import { AppHeader } from "@/components/teledrive/AppHeader";
 import { MediaGrid } from "@/components/teledrive/MediaGrid";
 import { UploadDialog } from "@/components/teledrive/UploadDialog";
 import { PreviewDialog } from "@/components/teledrive/PreviewDialog";
-import { performAiSearch, uploadFileAction } from "@/app/actions";
+import { fetchInitialMediaItems, performAiSearch, uploadFileAction } from "@/app/actions";
 import type { SortKey, SortOrder } from "@/components/teledrive/SearchBarAndControls";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function TeleDrivePage() {
-  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const [allMediaItems, setAllMediaItems] = useState<MediaItem[]>([]); // Stores all fetched items
+  const [displayedMediaItems, setDisplayedMediaItems] = useState<MediaItem[]>([]); // Items to display after search/sort
   const [isLoading, setIsLoading] = useState(true);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
@@ -23,26 +25,43 @@ export default function TeleDrivePage() {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Simulate fetching data
-    setTimeout(() => {
-      setMediaItems(mockMediaItems);
-      setIsLoading(false);
-    }, 1000);
-  }, []);
+    const loadInitialData = async () => {
+      setIsLoading(true);
+      try {
+        // In a real app, this would fetch from Telegram via your backend
+        const items = await fetchInitialMediaItems();
+        setAllMediaItems(items);
+        setDisplayedMediaItems(items); // Initially display all items
+      } catch (error) {
+        console.error("Failed to fetch initial media items:", error);
+        toast({
+          title: "Error Loading Media",
+          description: "Could not load media items. Please try again later.",
+          variant: "destructive",
+        });
+        setAllMediaItems([]); // Set to empty on error
+        setDisplayedMediaItems([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadInitialData();
+  }, [toast]);
 
   const handleSearch = useCallback(async (searchTerm: string) => {
     setIsLoading(true);
     try {
-      const results = await performAiSearch(searchTerm);
-      setMediaItems(results);
+      // Pass allMediaItems to performAiSearch so it can search within the full dataset
+      const results = await performAiSearch(searchTerm, allMediaItems);
+      setDisplayedMediaItems(results); // Update displayed items with search results
     } catch (error) {
       console.error("Search failed:", error);
       toast({ title: "Search Error", description: "Could not perform search.", variant: "destructive" });
-      setMediaItems(searchTerm ? [] : mockMediaItems); // Show empty or all on error
+      setDisplayedMediaItems(searchTerm ? [] : allMediaItems); // Show empty or all on error
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [allMediaItems, toast]);
 
   const handleSortChange = useCallback((newSortKey: SortKey, newSortOrder: SortOrder) => {
     setSortKey(newSortKey);
@@ -50,10 +69,11 @@ export default function TeleDrivePage() {
   }, []);
 
   const sortedMediaItems = useMemo(() => {
-    return [...mediaItems].sort((a, b) => {
+    // Sort only the currently displayed items (e.g., search results or all items)
+    return [...displayedMediaItems].sort((a, b) => {
       let comparison = 0;
       if (sortKey === "date") {
-        comparison = b.timestamp - a.timestamp; // Default newest first
+        comparison = b.timestamp - a.timestamp; 
       } else if (sortKey === "name") {
         comparison = a.name.localeCompare(b.name);
       } else if (sortKey === "type") {
@@ -61,10 +81,9 @@ export default function TeleDrivePage() {
       }
       return sortOrder === "asc" ? comparison : -comparison;
     });
-  }, [mediaItems, sortKey, sortOrder]);
+  }, [displayedMediaItems, sortKey, sortOrder]);
 
   const handleUpload = useCallback(async (data: UploadFormData) => {
-    // Simulate adding to the list. In a real app, you might re-fetch or update state based on backend response.
     const formData = new FormData();
     formData.append('file', data.file[0]);
     formData.append('fileName', data.fileName);
@@ -73,7 +92,10 @@ export default function TeleDrivePage() {
     try {
       const result = await uploadFileAction(formData);
       if (result.success && result.newItem) {
-        setMediaItems(prevItems => [result.newItem!, ...prevItems]);
+        // Add to both allMediaItems and displayedMediaItems
+        // This assumes the new item should be immediately visible and part of the base dataset
+        setAllMediaItems(prevItems => [result.newItem!, ...prevItems]);
+        setDisplayedMediaItems(prevItems => [result.newItem!, ...prevItems]);
         toast({ title: "Upload Successful", description: result.message });
       } else {
         toast({ title: "Upload Failed", description: result.message, variant: "destructive" });
@@ -144,4 +166,3 @@ function CardSkeleton() {
     </div>
   );
 }
-
