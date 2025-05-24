@@ -1,117 +1,147 @@
 
 "use server";
 
-import { searchMediaItems, type SearchMediaItemsInput, type SearchMediaItemsOutput } from "@/ai/flows/search-media-items";
-import { mockMediaItems } from "@/lib/mock-data";
-import type { MediaItem } from "@/lib/types";
+import type { 
+  MediaItem,
+  AuthStatusResponse,
+  LoginStartResponse,
+  LoginVerifyResponse,
+  FetchMediaResponse,
+  UploadFileBackendResponse,
+  User
+} from "@/lib/types";
+import { revalidatePath } from "next/cache";
 
-// Action to fetch initial media items
+const BACKEND_URL = process.env.BACKEND_API_URL || "http://localhost:5000"; // Your Python backend URL
+
+// --- Authentication Actions ---
+
+export async function startLogin(phone: string): Promise<LoginStartResponse> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/send_code_request`, { // Matches your app.py route
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone_number: phone }), // Matches your app.py expected key
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: "Failed to send code. Server returned an error." }));
+      return { error: errorData.error || `Server error: ${response.status}` };
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Start login error:", error);
+    return { error: "An unexpected error occurred during login start." };
+  }
+}
+
+export async function verifyLogin(code: string): Promise<LoginVerifyResponse> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/sign_in`, { // Matches your app.py route
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }), // Assumes phone_number is in session on backend
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: "Login verification failed. Server returned an error." }));
+      return { error: errorData.error || `Server error: ${response.status}` };
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Verify login error:", error);
+    return { error: "An unexpected error occurred during login verification." };
+  }
+}
+
+export async function checkAuthStatus(): Promise<AuthStatusResponse> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/is_authenticated`, { cache: 'no-store' }); // Matches your app.py route
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Failed to check auth status. Server returned an error." }));
+        return { loggedIn: false, error: errorData.error || `Server error: ${response.status}` };
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Check auth status error:", error);
+    return { loggedIn: false, error: "An unexpected error occurred while checking auth status." };
+  }
+}
+
+export async function logoutUser(): Promise<{ message?: string; error?: string }> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/logout`, { method: 'POST' }); // Matches your app.py route
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: "Logout failed. Server returned an error." }));
+      return { error: errorData.error || `Server error: ${response.status}` };
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Logout error:", error);
+    return { error: "An unexpected error occurred during logout." };
+  }
+}
+
+// --- Media Actions ---
+
 export async function fetchInitialMediaItems(): Promise<MediaItem[]> {
-  // TODO: Implement real Telegram API call here.
-  // This would involve:
-  // 1. Authenticating with Telegram (likely via a bot token or user session managed on the backend).
-  // 2. Making API calls to fetch messages from "Saved Messages" or other relevant chats.
-  //    - e.g., using `messages.getHistory` for saved messages, `messages.getSavedGifs`, etc.
-  // 3. Parsing the API response to extract media information (files, photos, videos).
-  // 4. Transforming this data into the `MediaItem` format.
-  //    - URLs (`url`, `thumbnailUrl`) would point to Telegram's CDN or be data URIs if fetched directly.
-  //    - Timestamps, file types, names, and sizes would come from the Telegram message/media objects.
-  console.log("Attempting to fetch initial media items (currently returning mock data)...");
+  try {
+    const response = await fetch(`${BACKEND_URL}/get_saved_messages_media`, { cache: 'no-store' }); // Matches your app.py route
+    if (!response.ok) {
+      const errorData: FetchMediaResponse = await response.json().catch(() => ({ items: [], error: "Failed to fetch media. Server returned an error." }));
+      console.error("Fetch media error from backend:", errorData.error);
+      return [];
+    }
+    const data: MediaItem[] = await response.json(); // Your backend returns a list directly
+    return data;
+  } catch (error) {
+    console.error("Fetch initial media items error:", error);
+    return [];
+  }
+}
+
+export async function uploadFileAction(formData: FormData): Promise<UploadFileBackendResponse> {
+  // Note: The 'fileName' and 'tags' from original FormData are not directly used here
+  // as your backend's /upload_file endpoint might expect them differently (e.g., in request.form)
+  // The existing backend app.py /upload_file expects 'file' and 'caption'
   
-  // For now, return mock data
-  await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
-  return mockMediaItems;
+  // We need to construct a new FormData to match the backend's expectation for field names if different.
+  // Your Python backend /upload_file takes 'file' and 'caption' (from request.form.get('caption')).
+  // The frontend currently sends 'fileName' and 'tags' as separate FormData entries.
+  // We'll keep it simple for now, assuming the backend handles this.
+  
+  try {
+    const response = await fetch(`${BACKEND_URL}/upload_file`, { // Matches your app.py route
+      method: 'POST',
+      body: formData, // Sending the raw FormData from the client
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ success: false, message: "Upload failed. Server returned an error." }));
+      return { success: false, message: errorData.message || `Server error: ${response.status}` };
+    }
+    const result: UploadFileBackendResponse = await response.json();
+    if (result.success) {
+        revalidatePath("/"); // Revalidate the main page to show new item
+    }
+    return result;
+  } catch (error) {
+    console.error("Upload file action error:", error);
+    return { success: false, message: "An unexpected error occurred during upload." };
+  }
 }
 
 
+// AI Search - Placeholder, as it's more complex to integrate with backend search
+// For now, it will continue to operate on client-side filtered data.
+// A true AI search would involve sending keywords to the backend,
+// which then uses Genkit or other tools to process and filter Telegram data.
 export async function performAiSearch(keywords: string, currentItems: MediaItem[]): Promise<MediaItem[]> {
   if (!keywords.trim()) {
-    return currentItems; // Return all currently loaded items if search is empty
+    return currentItems;
   }
-
-  try {
-    // Option 1: Use Genkit flow to analyze/filter `currentItems` (fetched from Telegram)
-    // This assumes `currentItems` is the dataset to search within.
-    // The Genkit flow `searchMediaItems` is designed to identify items based on content.
-    // It would need to be adapted to work with the structure of `MediaItem[]`.
-    // For example, the `identifyMediaContent` tool might take item descriptions or metadata.
-    
-    // const input: SearchMediaItemsInput = { keywords /*, potentially context from currentItems */ };
-    // const output: SearchMediaItemsOutput = await searchMediaItems(input);
-    // const resultMediaItemIds = new Set(output.searchResults);
-    // return currentItems.filter(item => resultMediaItemIds.has(item.id));
-
-    // TODO: Implement AI-powered search on the `currentItems` list or integrate with a Telegram search API if available.
-    // The current Genkit flow `searchMediaItems` might need to be re-evaluated for this purpose.
-    // It expects to return IDs, which would then be used to filter.
-
-    console.log(`AI Search for: "${keywords}". Currently performing simple fallback.`);
-    // Fallback: simple keyword search for demonstration
-    const lowerKeywords = keywords.toLowerCase();
-    return currentItems.filter(item => 
-      item.name.toLowerCase().includes(lowerKeywords) || 
-      item.tags.some(tag => tag.toLowerCase().includes(lowerKeywords))
-    );
-
-  } catch (error) {
-    console.error("AI Search Error:", error);
-    // Fallback to simple keyword search on error
-    const lowerKeywords = keywords.toLowerCase();
-    return currentItems.filter(item => 
-      item.name.toLowerCase().includes(lowerKeywords) || 
-      item.tags.some(tag => tag.toLowerCase().includes(lowerKeywords))
-    );
-  }
-}
-
-export async function uploadFileAction(formData: FormData): Promise<{ success: boolean; message: string; newItem?: MediaItem }> {
-  const file = formData.get('file') as File;
-  const fileName = formData.get('fileName') as string;
-  const tags = (formData.get('tags') as string).split(',').map(tag => tag.trim()).filter(Boolean);
-
-  if (!file || !fileName) {
-    return { success: false, message: "File and filename are required." };
-  }
-
-  // TODO: Implement real Telegram API call for uploading here.
-  // This would involve:
-  // 1. Authenticating with Telegram.
-  // 2. Using an API method like `messages.sendMedia` or `messages.sendMessage` (with a file attached)
-  //    to send the file to the user's "Saved Messages" chat.
-  // 3. The `fileName` could be used as a caption.
-  // 4. `tags` would need to be stored/managed by your app, perhaps in the caption or a separate database
-  //    as Telegram doesn't natively support arbitrary tags on messages in the same way.
-  
-  console.log(`Attempting to upload file: ${fileName} (tags: ${tags.join(', ')}) to Telegram (mocked)...`);
-
-  // Simulate upload process and creating a new item
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  const newItem: MediaItem = {
-    id: String(Date.now()), // Simple unique ID; in reality, from Telegram's response (message ID)
-    name: fileName,
-    type: determineFileType(file.type),
-    // In a real app, `url` and `thumbnailUrl` would come from Telegram after upload
-    // or be constructed to point to Telegram content.
-    url: URL.createObjectURL(file), // Temporary URL for local preview, NOT a real Telegram URL
-    thumbnailUrl: "https://placehold.co/200x150.png?text=New+Upload", // Placeholder
-    dataAiHint: "new upload",
-    timestamp: Date.now(),
-    tags: tags,
-    size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-  };
-  
-  // In a real app, this newItem would ideally be the direct response from Telegram,
-  // confirming the upload and providing necessary IDs/URLs.
-  
-  return { success: true, message: `${fileName} uploaded successfully (mock).`, newItem };
-}
-
-function determineFileType(mimeType: string): MediaItem['type'] {
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('video/')) return 'video';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType === 'application/pdf' || mimeType.startsWith('text/') || mimeType.includes('document')) return 'document';
-  if (mimeType === 'application/zip' || mimeType.includes('archive')) return 'archive';
-  return 'other';
+  console.log(`AI Search for: "${keywords}". Currently performing simple client-side fallback.`);
+  const lowerKeywords = keywords.toLowerCase();
+  return currentItems.filter(item => 
+    item.name.toLowerCase().includes(lowerKeywords) || 
+    (item.tags && item.tags.some(tag => tag.toLowerCase().includes(lowerKeywords)))
+  );
 }

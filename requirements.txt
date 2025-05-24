@@ -1,0 +1,5 @@
+txt
+Flask
+Telethon
+python-dotenv
+Flask-CORS
