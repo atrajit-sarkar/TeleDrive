@@ -52,9 +52,8 @@ def generate_chunks(buffer, chunk_size=8192): # 8KB chunks
         chunk = buffer.read(chunk_size) # Read from the buffer
         if not chunk:
             break
-@app.route('/send_code_request', methods=['POST'])
 async def send_code_request():
-    """
+    """    yield chunk
     Sends a code request to the provided phone number.
     Requires 'phone_number' in the request JSON body.
     """
@@ -88,10 +87,10 @@ async def send_code_request():
     except Exception as e: # Catch other potential network or API exceptions
         logging.error(f"Error sending code request: {e}", exc_info=True)
         # Differentiate between client-side and server-side errors if possible
+        return jsonify({'error': 'An unexpected error occurred'}), 500
+
 @app.route('/sign_in', methods=['POST'])
 async def sign_in():
-    """
-    Signs in the user using the phone number and verification code.
     Requires 'code' in the request JSON body. Phone number is retrieved from session.
     """
     data = request.get_json()
@@ -140,6 +139,14 @@ async def sign_in():
         if not await client.is_connected():
              return jsonify({'error': 'Failed to connect to Telegram during sign-in. Check network or API credentials.'}), 503 # Service Unavailable
         return jsonify({'error': str(e)}), 500
+@app.route('/send_code_request', methods=['POST'])
+
+@app.before_request
+async def connect_telegram():
+    # This connects the client at the start of each request that is async
+    client = get_user_client()
+    if client is not None: # Only attempt to connect if client was successfully created
+        await client.connect()
 
 @app.before_request
 async def connect_telegram():
@@ -184,7 +191,7 @@ async def logout():
 @app.route('/get_saved_messages_media', methods=['GET'])
 async def get_saved_messages_media():
     """
-    Fetches metadata of media items from the user's "Saved Messages".
+    Fetches metadata of media items from the user's "Saved Messages."
     Requires user to be authenticated.
     """
     if not session.get('telegram_authenticated'):
@@ -239,7 +246,6 @@ async def get_saved_messages_media():
                     })
                 except Exception as media_err:
 
-        return jsonify(media_items)
     except errors.FloodWaitError as e:
         logging.warning(f"Flood wait during get_saved_messages_media: {e.seconds} seconds")
         return jsonify({'error': f'Flood wait: try again in {e.seconds} seconds'}), 420
@@ -248,7 +254,7 @@ async def get_saved_messages_media():
         if not await client.is_connected():
              return jsonify({'error': 'Failed to connect to Telegram while fetching media. Check network or API credentials.'}), 503 # Service Unavailable
         return jsonify({'error': 'An unexpected error occurred while fetching media'}), 500
-
+ return jsonify(media_items), 200
 @app.after_request
 @app.route('/upload_file', methods=['POST'])
 async def upload_file():
