@@ -1,5 +1,6 @@
 txt
-Flask
-Telethon
+Flask[async]
 python-dotenv
 Flask-CORS
+Pyrogram
+tqdm
